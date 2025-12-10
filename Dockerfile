@@ -3,16 +3,13 @@
 # =========================
 FROM node:22-slim AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files and install dependencies
 COPY package*.json ./
-
-# Install dependencies
 RUN npm install --production
 
-# Copy source code
+# Copy all source code
 COPY . .
 
 # =========================
@@ -20,43 +17,36 @@ COPY . .
 # =========================
 FROM node:22-slim AS runtime
 
+WORKDIR /app
+
 # Set timezone to UTC
 ENV TZ=UTC
 
-# Set working directory
-WORKDIR /app
-
-# Install system dependencies: cron, tzdata, bash
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y cron tzdata bash && \
     ln -snf /usr/share/zoneinfo/UTC /etc/localtime && \
     echo "UTC" > /etc/timezone && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy Node.js dependencies from builder
+# Copy Node.js dependencies and code
 COPY --from=builder /app/node_modules ./node_modules
-
-# Copy application code
 COPY --from=builder /app ./
 
-# Secure the private key
+# Secure private key
 RUN chmod 600 student_private.pem
 
-# Copy cron configuration
-COPY cronjob /etc/cron.d/totp-cron
-
-# Set correct cron file permissions
-RUN chmod 0644 /etc/cron.d/totp-cron
-
-# Register cron job
-RUN crontab /etc/cron.d/totp-cron
-
-# Create persistent data directories
+# Create cron directories and last_code.txt
 RUN mkdir -p /data /cron && \
-    chmod -R 755 /data /cron
+    chmod -R 755 /data /cron && \
+    touch /cron/last_code.txt && chmod 666 /cron/last_code.txt
+
+# Copy cron job
+COPY cron/2fa-cron /etc/cron.d/totp-cron
+RUN chmod 0644 /etc/cron.d/totp-cron && crontab /etc/cron.d/totp-cron
 
 # Expose API port
 EXPOSE 8080
 
-# Start cron service + API server
+# Start cron service + API
 CMD ["sh", "-c", "cron && node server.js"]
